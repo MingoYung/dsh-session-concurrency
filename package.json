@@ -1,0 +1,69 @@
+{
+  "name": "@local/session-concurrency",
+  "version": "0.1.0",
+  "description": "DSH 会话级 Agent 推理并发按钮；额度 1 时主会话等待子任务完成。",
+  "type": "module",
+  "license": "MIT",
+  "author": "MingoYung",
+  "repository": { "type": "git", "url": "git+https://github.com/MingoYung/dsh-session-concurrency.git" },
+  "homepage": "https://github.com/MingoYung/dsh-session-concurrency#readme",
+  "bugs": { "url": "https://github.com/MingoYung/dsh-session-concurrency/issues" },
+  "main": "./index.js",
+  "exports": {
+    ".": "./index.js",
+    "./client": "./lib/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "scheduler.js", "remote.js", "lib", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/preview.png"],
+  "engines": { "node": ">=24", "dsh": "0.2.1-rc.4" },
+  "dependencies": { "zod": "4.4.3" },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.0.5",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.4",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "devDependencies": {
+    "@deepseek-ai/cordis": "4.0.5",
+    "@deepseek-ai/dsh-agent": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-agent-loop": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-api-gateway": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-api-remote-access": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-client-connection": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-fs-local": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-home-paths": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-llm": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-scope": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-session": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-session-persistence-jsonl": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-session-projection": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-session-query": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-subagent": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-subagent-spawn-in-process": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-system-prompt": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-tool-subagent": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-tools": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-typert-registry": "0.2.1-rc.4",
+    "@deepseek-ai/dsh-working-directory": "0.2.1-rc.4",
+    "esbuild": "0.25.12",
+    "react": "18.3.1",
+    "react-dom": "18.3.1"
+  },
+  "meta": { "title": "会话并发", "description": "在输入框设置当前会话的 1–10 推理额度；1 时主 Agent 等待子任务。" },
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": { "patch": "./cordis.patch.yml" },
+    "client": {
+      "platform": "web",
+      "inject": ["@deepseek-ai/dsh-client-ui-slots", "@deepseek-ai/dsh-client-ui-conversation", "@deepseek-ai/dsh-api-remotes"]
+    }
+  },
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "test": "node --test test/*.test.mjs",
+    "prepack": "npm run build"
+  }
+}

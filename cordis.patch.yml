@@ -1,0 +1,3 @@
+- insert:
+    - id: session-concurrency
+      name: '@local/session-concurrency'

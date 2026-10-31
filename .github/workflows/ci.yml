@@ -1,0 +1,35 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build-test-package:
+    name: Node 24 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '24'
+          cache: npm
+      - name: Install locked development dependencies
+        run: npm ci --no-audit --no-fund
+      - name: Build client bundle
+        run: npm run build
+      - name: Test real DSH runtime and Remote integration
+        run: npm test
+      - name: Verify distributable package
+        run: npm pack --ignore-scripts --json

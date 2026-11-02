@@ -7,6 +7,7 @@ import { carrierKeyOf } from '@deepseek-ai/dsh-scope';
 import { Remote, RemoteError, TypertRemoteService } from '@deepseek-ai/dsh-typert-protocol';
 import { SessionConcurrencyScheduler } from './scheduler.js';
 import { TYPERT_REMOTE } from './remote.js';
+import { ActivationMonitor, concurrencyContext, DelegationGate, streamLedger } from './runtime.js';
 
 export const name = 'session-concurrency';
 export const inject = ['agents', 'llm', 'typert'];
@@ -15,13 +16,14 @@ const remoteInitializers = [];
 
 /** Native Gateway service: ctx.remote.sessionConcurrency.get/set({sessionId,...}). */
 export class SessionConcurrencyService extends TypertRemoteService {
-  constructor(ctx, scheduler, persist, registerLive, hostCapacity) {
+  constructor(ctx, scheduler, persist, registerLive, hostCapacity, monitorMode = () => 'events') {
     super(ctx, 'sessionConcurrency');
     for (const initialize of remoteInitializers) initialize.call(this);
     this.scheduler = scheduler;
     this.persist = persist;
     this.registerLive = registerLive;
     this.hostCapacity = hostCapacity;
+    this.monitorMode = monitorMode;
     // Cordis derives a receiver with Object.create(service) for each Remote
     // invocation. Mutate this shared object, never receiver-owned scalar fields.
     this.state = { updates: Promise.resolve(), closing: false, closePromise: undefined };
@@ -59,7 +61,7 @@ export class SessionConcurrencyService extends TypertRemoteService {
   }
 
   snapshot(sessionId) {
-    return { ...this.scheduler.snapshot(sessionId), hostCapacity: this.hostCapacity() };
+    return { ...this.scheduler.snapshot(sessionId), hostCapacity: this.hostCapacity(), monitorMode: this.monitorMode() };
   }
 
   assertOpen() {
@@ -107,7 +109,7 @@ export function apply(ctx, config = {}) {
   const storageFile = typeof config.storageFile === 'string'
     ? config.storageFile
     : dshHomePath('plugins', 'session-concurrency', 'limits.json');
-  const scheduler = new SessionConcurrencyScheduler(loadLimits(storageFile, ctx.logger));
+  const scheduler = new SessionConcurrencyScheduler(loadLimits(storageFile, ctx.logger), streamLedger(ctx));
   let writes = Promise.resolve();
   const persist = limits => {
     // Capture this command's data before another Remote call can mutate it.
@@ -137,7 +139,12 @@ export function apply(ctx, config = {}) {
       current = typeof parentId === 'string' ? ctx.agents.get(parentId) : undefined;
     }
   };
-  const registerLive = id => registerAgent(ctx.agents.get(id));
+  const monitor = new ActivationMonitor(ctx, scheduler, registerAgent);
+  const delegations = new DelegationGate();
+  const registerLive = id => {
+    registerAgent(ctx.agents.get(id));
+    monitor.reconcile();
+  };
   for (const agent of ctx.agents.list()) registerAgent(agent);
   const hostCapacity = () => {
     const value = ctx.get('subagents')?.config?.maxActiveSubagents?.get?.();
@@ -161,7 +168,19 @@ export function apply(ctx, config = {}) {
       events: [], objects: [],
     },
   });
-  const service = new SessionConcurrencyService(ctx, scheduler, persist, registerLive, hostCapacity);
+  const service = new SessionConcurrencyService(ctx, scheduler, persist, registerLive, hostCapacity, () => monitor.mode);
+
+  ctx.inject(['systemPrompt'], promptCtx => {
+    promptCtx.systemPrompt.context({
+      name: 'session-concurrency:runtime', order: 121, required: true, interpolate: false,
+      text: ({ agent, scope }) => {
+        const current = agent ?? scope;
+        if (typeof current?.id !== 'string') return '';
+        registerLive(current.id);
+        return concurrencyContext(scheduler, current.id);
+      },
+    });
+  });
 
   ctx.on('agent/created', ({ agent }) => { registerAgent(agent); }, { global: true });
   ctx.on('subagent/start', function(info) {
@@ -170,15 +189,45 @@ export function apply(ctx, config = {}) {
     const carrierParent = carrierKeyOf(this);
     const parentId = child?.session?.header?.parentSession ?? carrierParent?.id;
     registerAgent(carrierParent);
-    if (typeof parentId === 'string') scheduler.runStarted({ ...info, parentId });
+    if (typeof parentId === 'string') monitor.start(info, parentId);
     else ctx.logger.warn('session-concurrency: a subagent start had no resolvable parent; it is not gated.');
   }, { global: true });
   ctx.on('subagent/end', info => { scheduler.runEnded(info.runId); }, { global: true });
+
+  // Events and exact activation promises handle completion promptly. A bounded
+  // host-only sweep adopts missed starts and refreshes parked/active state.
+  // It neither calls the model nor guesses completion from elapsed time.
+  let reconcileQueued = false;
+  ctx.on('agent/status', () => {
+    if (reconcileQueued) return;
+    reconcileQueued = true;
+    queueMicrotask(() => { reconcileQueued = false; monitor.reconcile(); });
+  }, { global: true });
+  monitor.reconcile();
+  const timer = setInterval(() => monitor.reconcile(), 5000);
+  timer.unref?.();
+
+  ctx.on('tools/execute', async (exec, next) => {
+    const parent = exec.agent;
+    if (exec.name !== 'subagent' || !parent) return next();
+    registerLive(parent.id);
+    if (scheduler.limitOf(parent.id) !== 1) return next();
+    return delegations.run(parent.id, exec.signal, async signal => {
+      await scheduler.waitForChildren(parent.id, signal);
+      signal.throwIfAborted();
+      const result = await next();
+      monitor.reconcile();
+      await scheduler.waitForChildren(parent.id, signal);
+      signal.throwIfAborted();
+      return result;
+    });
+  }, { global: true });
 
   ctx.on('tools/post-execute', async (exec, _result, next) => {
     const decision = await next();
     if (exec.agent) {
       registerAgent(exec.agent);
+      monitor.reconcile();
       // Wait at the tool boundary, BEFORE the loop claims its next step. This
       // covers direct delegation and tools/workflows that delegate indirectly.
       // Child completion delivery remains free to enter the parent's inbox.
@@ -190,6 +239,7 @@ export function apply(ctx, config = {}) {
 
   ctx.on('agent/pre-step', async ({ agent, signal }, next) => {
     registerAgent(agent);
+    monitor.reconcile();
     await scheduler.waitForChildren(agent.id, signal);
     signal.throwIfAborted();
     return next();
@@ -220,6 +270,9 @@ export function apply(ctx, config = {}) {
     // ensure no old-generation write can land after disposal has completed.
     await service.close();
     await writes.catch(() => {});
+    clearInterval(timer);
+    delegations.dispose();
+    monitor.dispose();
     scheduler.dispose();
   }, 'session-concurrency: drain settings and clean pending requests');
 }

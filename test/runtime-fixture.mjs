@@ -29,7 +29,7 @@ export function texts(messages) {
   return messages.flatMap(message => message.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n');
 }
 
-export async function createFixture({ policy, name = 'case', limit = 1, installPlugin = true } = {}) {
+export async function createFixture({ policy, name = 'case', limit = 1, installPlugin = true, maxActiveSubagents = 10 } = {}) {
   const home = await mkdtemp(join(homes, `${name}-`));
   const ctx = new cordis.Context();
   const handles = [];
@@ -93,7 +93,7 @@ export async function createFixture({ policy, name = 'case', limit = 1, installP
   await ctx.plugin(persistence, { root: join(home, 'sessions'), compression: 'none' });
   await ctx.plugin(query.default);
   await ctx.plugin(loop.default, { agents: [], maxParallelToolCalls: 10 });
-  await ctx.plugin(subagents.default, { maxDepth: 5, maxActiveSubagents: 10 });
+  await ctx.plugin(subagents.default, { maxDepth: 5, maxActiveSubagents });
   await ctx.plugin(spawn, { providerName: 'spawn' });
   await ctx.plugin(subagentTool, { provider: 'spawn', maxDepth: 5 });
   await ctx.plugin({ name: 'test-offline-adapter', inject: ['llm'], apply(c) { c.llm.registerAdapter(['offline-test'], new FakeAdapter()); } });
@@ -102,10 +102,11 @@ export async function createFixture({ policy, name = 'case', limit = 1, installP
   ctx.on('subagent/end', info => record('subagent/end', { id: info.id, runId: info.runId, stopReason: info.stopReason }), { global: true });
 
   let pluginFiber;
-  if (installPlugin) {
+  async function installConcurrencyPlugin() {
     const plugin = await import('../index.js');
     pluginFiber = await ctx.plugin(plugin, { storageFile: join(home, 'limits.json') });
   }
+  if (installPlugin) await installConcurrencyPlugin();
 
   async function createRoot(id, ownLimit = limit) {
     const handle = await ctx.agents.create({ sessionId: id, agentOptions: { provider: 'offline-test', model: 'deterministic' }, meta: { cwd: home } });
@@ -132,7 +133,7 @@ export async function createFixture({ policy, name = 'case', limit = 1, installP
     await ctx.fiber.dispose();
   }
 
-  return { ctx, home, trace, calls, peaks, active, maximum: () => maximum, createRoot, settle, close, record,
+  return { ctx, home, trace, calls, peaks, active, maximum: () => maximum, createRoot, settle, close, record, installConcurrencyPlugin,
     async reloadPlugin() {
       if (!pluginFiber) throw new Error('Fixture was not created with the plugin.');
       await pluginFiber.dispose();

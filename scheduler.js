@@ -1,11 +1,14 @@
 /** Per-root-session inference scheduler. No DSH imports, credentials or transcript access. */
 export class SessionConcurrencyScheduler {
-  constructor(entries = []) {
+  constructor(entries = [], ledger = { active: new Map(), listeners: new Set() }) {
     this.limits = new Map(entries);
     this.parents = new Map();
     this.runs = new Map();
     this.children = new Map();
-    this.active = new Map();
+    this.ledger = ledger;
+    this.active = ledger.active;
+    this.changed = () => this.pump();
+    ledger.listeners.add(this.changed);
     this.queue = [];
     this.waiters = new Set();
     this.disposed = false;
@@ -46,8 +49,10 @@ export class SessionConcurrencyScheduler {
 
   runStarted({ runId, id, parentId }) {
     if (!runId || !id || !parentId || this.runs.has(runId)) return;
-    this.registerSession(id, parentId);
-    this.runs.set(runId, { id, parentId });
+    // Publish the parent link and activation atomically before pumping. A
+    // request must not slip through between discovering a child and gating it.
+    this.parents.set(id, parentId);
+    this.runs.set(runId, { id, parentId, parked: false });
     let runs = this.children.get(parentId);
     if (!runs) this.children.set(parentId, runs = new Set());
     runs.add(runId);
@@ -64,7 +69,35 @@ export class SessionConcurrencyScheduler {
     this.pump();
   }
 
-  blocked(id) { return this.limitOf(id) === 1 && (this.children.get(id)?.size ?? 0) > 0; }
+  setParked(runId, parked) {
+    const run = this.runs.get(runId);
+    if (!run || run.parked === parked) return;
+    run.parked = parked;
+    this.pump();
+  }
+
+  firstChild(id) {
+    for (const runId of this.children.get(id) ?? []) {
+      const run = this.runs.get(runId);
+      if (run && !run.parked) return run;
+    }
+  }
+
+  blockReason(id) {
+    if (this.limitOf(id) !== 1) return null;
+    const seen = new Set();
+    // Retain each branch's place until its activation settles, including tool
+    // I/O between LLM calls. Descendants of that branch can still run, so nested
+    // delegation never waits for a permit held by its own ancestor.
+    for (let child = id, parent; (parent = this.parents.get(child)) && !seen.has(child); child = parent) {
+      seen.add(child);
+      const first = this.firstChild(parent);
+      if (first && first.id !== child) return 'sibling';
+    }
+    return this.firstChild(id) ? 'children' : null;
+  }
+
+  blocked(id) { return this.blockReason(id) !== null; }
 
   waitForChildren(id, signal) {
     this.check(signal);
@@ -141,7 +174,7 @@ export class SessionConcurrencyScheduler {
         if (released) return;
         released = true;
         this.active.delete(token);
-        this.pump();
+        for (const changed of this.ledger.listeners) changed();
       });
     }
   }
@@ -149,22 +182,35 @@ export class SessionConcurrencyScheduler {
   snapshot(id) {
     const rootSessionId = this.rootOf(id);
     const waiting = new Set();
+    const queued = new Set();
     for (const item of this.waiters) {
-      if (this.rootOf(item.id) === rootSessionId) waiting.add(item.id);
+      if (this.rootOf(item.id) !== rootSessionId) continue;
+      (this.blockReason(item.id) === 'children' ? waiting : queued).add(item.id);
     }
-    let queued = 0;
     for (const item of this.queue) {
       if (this.rootOf(item.id) !== rootSessionId) continue;
-      if (this.blocked(item.id)) waiting.add(item.id);
-      else queued++;
+      if (this.blockReason(item.id) === 'children') waiting.add(item.id);
+      else queued.add(item.id);
+    }
+    const runs = [...this.runs.values()].filter(run => this.rootOf(run.id) === rootSessionId);
+    let serialAgentId = null;
+    if (this.limitOf(id) === 1) {
+      const seen = new Set();
+      for (let child = this.firstChild(rootSessionId); child && !seen.has(child.id); child = this.firstChild(child.id)) {
+        seen.add(child.id);
+        serialAgentId = child.id;
+      }
     }
     return {
       sessionId: id,
       rootSessionId,
       limit: this.limits.get(rootSessionId) ?? null,
       active: this.activeCount(rootSessionId),
-      queued,
+      queued: queued.size,
       waiting: waiting.size,
+      trackedChildren: runs.length,
+      parkedChildren: runs.filter(run => run.parked).length,
+      serialAgentId,
     };
   }
 
@@ -189,6 +235,7 @@ export class SessionConcurrencyScheduler {
   dispose() {
     if (this.disposed) return;
     this.disposed = true;
+    this.ledger.listeners.delete(this.changed);
     const reason = new DOMException('Session concurrency plugin unloaded.', 'AbortError');
     for (const item of [...this.waiters, ...this.queue]) {
       item.signal?.removeEventListener('abort', item.abort);

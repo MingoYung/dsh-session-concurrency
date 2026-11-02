@@ -49,6 +49,8 @@ function normalizeState(response) {
   const count = key => Number.isFinite(state[key]) && state[key] >= 0 ? state[key] : 0
   return {
     limit: state.limit, active: count('active'), queued: count('queued'), waiting: count('waiting'),
+    trackedChildren: count('trackedChildren'), parkedChildren: count('parkedChildren'),
+    monitorMode: state.monitorMode,
     hostCapacity: Number.isInteger(state.hostCapacity) && state.hostCapacity > 0 ? state.hostCapacity : null,
   }
 }
@@ -257,9 +259,11 @@ export function ConcurrencyControl({ sessionId, readState, saveLimit }) {
         onChange={event => { const value = Number(event.target.value); setCustom(value); setDraft(value); setFeedback('') }}
       />
       <div className="dsh-sc-ticks" aria-hidden="true"><span>1</span><span>2</span><span>3</span><span>4</span><span>5</span><span>6</span><span>7</span><span>8</span><span>9</span><span>10</span></div>
-      <p id={helpId} className="dsh-sc-help">{draft === null ? '沿用宿主的派发与并发规则。其他会话的设置不受影响。' : draft === 1 ? '串行推理：子 Agent 工作时，主 Agent 等待；子任务结束后主 Agent 继续。' : '超出额度的推理请求等待，工具 I/O 可重叠；等待子任务的 Agent 不占推理名额。'}</p>
+      <p id={helpId} className="dsh-sc-help">{draft === null ? '沿用宿主的派发与并发规则。其他会话的设置不受影响。' : draft === 1 ? '单通道：按子任务分支顺序运行，主 Agent 让出通道。完成或失败后由宿主交回结果，无需模型轮询。' : '超出额度的推理请求等待，工具 I/O 可重叠；等待子任务的 Agent 不占推理名额。'}</p>
       {state && state.active > 0 && draft !== null && <p className="dsh-sc-feedback">进行中的推理会完成，新额度约束后续请求。</p>}
-      {state && <div className="dsh-sc-status" aria-label="当前会话调度状态"><span>推理中 {state.active}</span><span>排队 {state.queued}</span><span>主会话等待 {state.waiting}</span></div>}
+      {state && <div className="dsh-sc-status" aria-label="当前会话调度状态"><span>推理中 {state.active}</span><span>排队 Agent {state.queued}</span><span>让位等待 {state.waiting}</span><span>未结束子任务 {state.trackedChildren}</span></div>}
+      {state?.limit === 1 && <p className="dsh-sc-feedback">{state.monitorMode === 'native' ? '后台监控：原生事件即时响应，每 5 秒校准任务状态，不占模型通道。' : '后台监控：使用原生事件；此宿主不支持运行状态补接。'}</p>}
+      {state?.parkedChildren > 0 && <p className="dsh-sc-feedback">{state.parkedChildren} 个子任务已暂停并保留待处理输入；未自动重启，也未标记完成。</p>}
       {state?.hostCapacity !== null && state?.hostCapacity !== undefined && <p className="dsh-sc-feedback">宿主最多驻留 {state.hostCapacity} 个子 Agent，与推理额度独立。</p>}
       {(error || feedback || loading) && <p className="dsh-sc-feedback" data-error={Boolean(error)} role={error ? 'alert' : 'status'}>{error || feedback || '正在读取会话设置…'}</p>}
       <div className="dsh-sc-footer"><span className="dsh-sc-muted">{changed ? '应用后生效' : '已保存的设置会随会话保留'}</span><button type="button" className="dsh-sc-apply" disabled={saving || state === null || !changed} onClick={() => void apply()}>{saving ? '应用中…' : '应用'}</button></div>

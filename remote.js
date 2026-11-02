@@ -8,6 +8,8 @@ const stateSchema = z.object({
   limit: z.number().int().min(1).max(10).nullable(),
   active: z.number().int().nonnegative(), queued: z.number().int().nonnegative(),
   waiting: z.number().int().nonnegative(), hostCapacity: z.number().int().positive().nullable(),
+  trackedChildren: z.number().int().nonnegative(), parkedChildren: z.number().int().nonnegative(),
+  serialAgentId: z.string().nullable(), monitorMode: z.enum(['native', 'events']),
 });
 const codec = (schema, symbol) => ({
   mode: 'strict', typeSymbol: `@local/session-concurrency#${symbol}`,

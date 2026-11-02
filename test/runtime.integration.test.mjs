@@ -91,13 +91,18 @@ test('actual DSH runtime: a child model failure releases quota and wakes its par
 
 test('actual DSH runtime: cancelling a queued child frees it without sending a model request', { timeout: 20000 }, async t => {
   const fixture = await createFixture({ name: 'cancellation', policy: async (request, helpers) => {
-    if (!request.parentId && request.count === 1) return [childCall('slow'), childCall('queued')];
     if (request.parentId) { await helpers.delay(180); return 'UNCANCELLED_RESULT'; }
     return 'PARENT_DONE';
   } });
   t.after(() => fixture.close());
   const root = await fixture.createRoot('root-cancellation');
-  root.followup({ content: [{ type: 'text', text: 'Create two children.' }], source: { kind: 'user' } });
+  // Internal workflows can create activations without the native tool's new
+  // dispatch queue. They must still be queued and cancellable before inference.
+  for (const label of ['slow', 'queued']) await fixture.ctx.subagents.startActivation({
+    provider: 'spawn', label, delivery: 'parent', signal: new AbortController().signal,
+    request: { parent: root, maxDepth: 5, prompt: [{ type: 'text', text: label }] },
+  });
+  root.followup({ content: [{ type: 'text', text: 'Collect the two child results.' }], source: { kind: 'user' } });
   await bounded((async () => {
     while (fixture.trace.filter(event => event.type === 'subagent/start').length < 2) await delay(2);
     while ((await fixture.ctx.sessionConcurrency.get({ sessionId: root.id })).queued < 1) await delay(2);

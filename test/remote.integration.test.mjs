@@ -68,6 +68,7 @@ test('native Client Remote -> JSON Fetch -> Host Gateway round-trips the quota c
   assert.equal(response.ok, true, JSON.stringify(response));
   assert.deepEqual(response.value, {
     sessionId: root.id, rootSessionId: root.id, limit: 4, active: 0, queued: 0, waiting: 0, hostCapacity: 10,
+    trackedChildren: 0, parkedChildren: 0, serialAgentId: null, monitorMode: 'native',
   });
   const get = await fixture.client.remote.sessionConcurrency.get({ sessionId: root.id });
   assert.equal(get.ok, true);

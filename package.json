@@ -1,6 +1,6 @@
 {
   "name": "@local/session-concurrency",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "DSH 会话级 Agent 推理并发按钮；额度 1 时主会话等待子任务完成。",
   "type": "module",
   "license": "MIT",
@@ -14,7 +14,7 @@
     "./client": "./lib/client.js",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "scheduler.js", "remote.js", "lib", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/preview.png"],
+  "files": ["index.js", "scheduler.js", "runtime.js", "remote.js", "lib", "cordis.patch.yml", "README.md", "LICENSE", "THIRD_PARTY_NOTICES.md", "docs/preview.png"],
   "engines": { "node": ">=24", "dsh": "0.2.1-rc.4" },
   "dependencies": { "zod": "4.4.3" },
   "peerDependencies": {

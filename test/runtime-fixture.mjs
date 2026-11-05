@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir } from 'node:fs/promises';
+import { mkdtemp, mkdir, readFile } from 'node:fs/promises';
 import { dirname, resolve, join } from 'node:path';
-import { fileURLToPath, pathToFileURL } from 'node:url';
+import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
 
 const directory = dirname(fileURLToPath(import.meta.url));
@@ -8,22 +8,24 @@ const homes = resolve(directory, 'homes');
 // Lifecycle-only runs also need the parent of their mkdtemp prefix. Creating it
 // at fixture import makes test files independent in a fresh checkout.
 await mkdir(homes, { recursive: true });
-// A normal checkout uses the exact devDependencies from package-lock.json.
-// An explicit runtime override permits compatibility probes against an extracted
-// DSH distribution; no machine-specific directory is assumed by default.
-const runtime = process.env.DSH_TEST_RUNTIME
-  ? resolve(process.env.DSH_TEST_RUNTIME, 'node_modules/@deepseek-ai')
-  : null;
-const moduleOf = name => runtime
-  ? import(pathToFileURL(join(runtime, name, 'lib/index.js')).href)
-  : import(`@deepseek-ai/${name}`);
+// Compatibility runs install a complete dependency set. All fixture, plugin,
+// and Remote imports then resolve to the same runtime and Cordis instance.
 const [cordis, llm, session, projection, prompt, tools, agents, loop, subagents, spawn, subagentTool,
   filesystem, workingDirectory, persistence, query, typert] = await Promise.all([
   'cordis', 'dsh-llm', 'dsh-session', 'dsh-session-projection', 'dsh-system-prompt', 'dsh-tools',
   'dsh-agent', 'dsh-agent-loop', 'dsh-subagent', 'dsh-subagent-spawn-in-process', 'dsh-tool-subagent',
   'dsh-fs-local', 'dsh-working-directory', 'dsh-session-persistence-jsonl', 'dsh-session-query',
   'dsh-typert-registry',
-].map(moduleOf));
+].map(name => import(`@deepseek-ai/${name}`)));
+// DSH 0.2.2 moved native execution out of dsh-tools. Read the resolved package's
+// actual version so the old complete runtime never needs the new executor.
+const { version: toolsVersion } = JSON.parse(await readFile(
+  new URL(import.meta.resolve('@deepseek-ai/dsh-tools/package.json')), 'utf8',
+));
+const [toolsMajor, toolsMinor, toolsPatch] = toolsVersion.split(/[.-]/).slice(0, 3).map(Number);
+if (![toolsMajor, toolsMinor, toolsPatch].every(Number.isInteger)) throw new Error(`Invalid dsh-tools version: ${toolsVersion}`);
+const usesSeparateExecutor = toolsMajor > 0 || toolsMinor > 2 || (toolsMinor === 2 && toolsPatch >= 2);
+const nativeExecutor = usesSeparateExecutor ? await import('@deepseek-ai/dsh-tool-executor-native') : null;
 
 export function texts(messages) {
   return messages.flatMap(message => message.content ?? []).filter(block => block.type === 'text').map(block => block.text).join('\n');
@@ -85,7 +87,8 @@ export async function createFixture({ policy, name = 'case', limit = 1, installP
   await ctx.plugin(session.default);
   await ctx.plugin(projection.default);
   await ctx.plugin(prompt.default, { includeHarnessIdentity: false, includeRuntimeContext: false });
-  await ctx.plugin(tools.default, { mode: 'native' });
+  await ctx.plugin(tools.default, usesSeparateExecutor ? {} : { mode: 'native' });
+  if (nativeExecutor) await ctx.plugin(nativeExecutor);
   await ctx.plugin(agents.default);
   await ctx.plugin(llm.default);
   await ctx.plugin(filesystem.default, { cwd: home });

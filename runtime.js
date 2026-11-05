@@ -1,5 +1,5 @@
 /**
- * DSH 0.2.1-rc.4 compatibility adapter. Lifecycle events remain the primary
+ * DSH 0.2.1-rc.4 / 0.2.2-rc.1 compatibility adapter. Lifecycle events remain the primary
  * contract. The guarded read-only manager snapshot and its exact activation
  * promises allow adoption after reload and recovery of a missed terminal event.
  * No model calls, interrupts, fabricated results or parent inbox writes.

@@ -10,13 +10,14 @@ permissions:
 
 jobs:
   build-test-package:
-    name: Node 24 / ${{ matrix.os }}
+    name: Node 24 / ${{ matrix.os }} / DSH ${{ matrix.runtime }}
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, windows-latest]
+        runtime: [0.2.1-rc.4, 0.2.2-rc.1]
     steps:
       - uses: actions/checkout@v7
         with:
@@ -27,6 +28,8 @@ jobs:
           cache: npm
       - name: Install locked development dependencies
         run: npm ci --no-audit --no-fund
+      - name: Select and verify complete DSH test runtime
+        run: node scripts/select-test-runtime.mjs ${{ matrix.runtime }}
       - name: Build client bundle
         run: npm run build
       - name: Test real DSH runtime and Remote integration

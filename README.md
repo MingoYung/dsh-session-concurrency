@@ -20,9 +20,9 @@
 
 ## 安装与使用
 
-适配并实测：**DSH NEXT 2.0.21-next / DSH 内核 0.2.1-rc.4**。其他内核版本需要重新核对扩展接口。
+适配并实测：**DSH NEXT 2.0.22-next / DSH 内核 0.2.2-rc.1 / Cordis 4.1.0**，同时保留 **DSH NEXT 2.0.21-next / 内核 0.2.1-rc.4 / Cordis 4.0.5** 兼容。只声明这两个已经验证的内核版本；其他内核需要重新核对扩展接口。0.2.0 安装包只声明支持旧内核，新版 DSH 的版本准入检查会拒绝它，请更新至 **0.2.1**。
 
-1. 获取构建产物 `local-session-concurrency-0.2.0.tgz`，不需要解压。本地构建可用 `npm run build && npm pack`；公开发布版本以 [Releases](https://github.com/MingoYung/dsh-session-concurrency/releases) 实际内容为准。
+1. 获取构建产物 `local-session-concurrency-0.2.1.tgz`，不需要解压。本地构建可用 `npm run build && npm pack`；公开发布版本以 [Releases](https://github.com/MingoYung/dsh-session-concurrency/releases) 实际内容为准。
 2. 打开 DSH 的“插件 → 添加插件”，填入该文件的完整本地路径，安装并启用。
 3. 按 DSH 提示刷新界面或重新加载插件。
 4. 在发送会话第一条消息前，点击输入框左侧的“并发 默认”，选择“自定义”，调整滑杆并点击“应用”。
@@ -65,14 +65,14 @@
 - 两个主会话各设 1 仍可能合计请求同一个本地推理服务两次。跨会话共享模型端点的限流是另一项策略。
 - 本插件不读取消息正文或模型密钥，也不依赖特定模型名判断是否启用。
 - 分支串行面向独立委派任务。需要等待另一个尚未执行分支提供消息的协作任务，应调整任务依赖或并发额度；插件不会凭超时猜测成功、强制杀掉慢任务或绕过审核。
-- 运行状态补接使用 DSH **0.2.1-rc.4** 的只读 `manager.resident` 快照和 activation 结果 Promise，集中封装在 `runtime.js`。宿主不提供该快照时退回原生事件模式，面板会说明；升级 DSH 内核后需重新验证此接口。
+- 运行状态补接使用 DSH **0.2.1-rc.4 / 0.2.2-rc.1** 的只读 `manager.resident` 快照和 activation 结果 Promise，集中封装在 `runtime.js`。宿主不提供该快照时退回原生事件模式，面板会说明；升级 DSH 内核后需重新验证此接口。
 - 推荐在会话空闲时升级/重载。0.2.0 之间重载可继续统计上一代尚未结束的推理流，但不能追溯安装插件以前已发出的请求。DSH 在 `pre-step` 之前领取收件箱消息，运行中安装时已领取的步骤可能在下一个边界才读到原生子结果；插件不改写收件箱、不重复通知。
 
 会话设置保存于 `$DSH_HOME/plugins/session-concurrency/limits.json`，内容为会话 ID 和数字额度。禁用或卸载不会修改原生子 Agent 配置。卸载保留设置文件，便于重新安装后恢复。
 
 ## 开发和测试
 
-使用 Node.js 24 与 npm：
+使用 Node.js **24.9.0 或更新版本**与 npm：
 
 ```sh
 npm ci
@@ -81,7 +81,17 @@ npm test
 npm pack
 ```
 
-依赖锁定到实测 DSH **0.2.1-rc.4**。Cordis、Scope、Typert 等为宿主 Peer 依赖，开发测试安装固定的开发版本，插件安装时复用 DSH 自己的实例。浏览器包只将 React/ReactDOM 作为宿主共享模块，其余所需纯帮助代码包含在构建产物中。
+默认开发依赖锁定到 DSH **0.2.2-rc.1 / Cordis 4.1.0**。Cordis、Scope、Typert 等为宿主 Peer 依赖，开发测试安装固定的开发版本，插件安装时复用 DSH 自己的实例。浏览器包只将 React/ReactDOM 作为宿主共享模块，其余所需纯帮助代码包含在构建产物中。
+
+测试宿主根据实际 `dsh-tools` 包版本装配：旧内核使用原生工具模式，新内核独立挂载 `dsh-tool-executor-native`。测试适配不会修改生产宿主的工具配置。回归旧内核时，先整体切换测试依赖，再执行同一套测试；`npm ci` 可恢复默认锁定版本：
+
+```sh
+node scripts/select-test-runtime.mjs 0.2.1-rc.4
+npm test
+npm ci
+```
+
+切换脚本核对全部声明的 DSH 测试包与 Cordis 的实际解析版本，不改 package.json 和锁文件。
 
 集成测试使用真实 Cordis、AgentLoop、原生 Subagent、JSONL 持久化、Gateway 与 Client Remote，模型适配器为本地确定性实现，**不发送远端模型请求、不产生模型费用**。覆盖：
 
@@ -92,13 +102,13 @@ npm pack
 - 原生 RPC 的严格参数校验、会话权限和子会话继承边界。
 - 并发保存、受控慢写、插件卸载/重载与 Gateway 派生接收者的共享更新队列。
 
-CI 在 Ubuntu 与 Windows 上执行构建、测试和打包。真实 DSH 页面中的首条前设置、刷新保留、两个真实 Session 的设置隔离另有本地安装验收；截图来自空白隔离环境。没有把确定性测试模型的速度当作真实 Qwen tok/s 改善证据。
+CI 在 Ubuntu 与 Windows 上分别使用新旧两套完整内核依赖执行构建、29 项集成测试和打包。真实 DSH 页面中的首条前设置、刷新保留、两个真实 Session 的设置隔离另有本地安装验收；截图来自空白隔离环境。没有把确定性测试模型的速度当作真实 Qwen tok/s 改善证据。
 
 0.2.0 的审核测试覆盖 ClearAI 所用的宿主调用约定，未修改或完整运行市场版 ClearAI 的业务审核链。模型生成错误工具参数、缺失真实产物、审核规则拒绝等问题仍应按各自错误处理，不能靠并发插件证明业务任务成功。
 
 另有一次 **0.1.0 的历史真实本地 Qwen 双子任务测试**：主 Agent 同批派发两个子任务，并在两子结束、收到两份结果后恢复。模型服务记录的 6 次主/子 Agent 推理与 1 次原生标题请求全部完成；7 条包含排队、prefill、生成和清理的完整受理区间，观测并发峰值为 **1**。该测试验证当时版本的串行调度行为，未测量 tok/s 改善幅度。**0.2.0 本次验收使用离线确定性适配器，未重新运行真实 Qwen 或完整 ClearAI 业务链。**
 
-可选地设置 `DSH_TEST_RUNTIME`，让调试测试使用另一套包含 `node_modules` 的同版本 Runtime；普通开发与 CI 无需此变量。
+0.2.1 为 DSH 0.2.2-rc.1 兼容更新：同步宿主准入声明和 Peer 版本范围，调整新旧内核的测试装配并增加双内核 CI；保留 0.2.0 的调度功能。已移除只替换部分动态导入的 `DSH_TEST_RUNTIME` 调试开关，跨版本验证统一使用整套依赖，避免 Remote 和插件静态导入混用不同 Cordis 实例。
 
 ## 反馈与许可
 
